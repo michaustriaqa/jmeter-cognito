@@ -1,0 +1,6 @@
+# JMeter output
+/reports/
+/*.jtl
+/*.csv
+/jmeter.log
+/*.tmp
