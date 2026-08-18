@@ -1,21 +1,27 @@
 # Example: Auth Sample Test Plans
 
-Three minimal, runnable JMeter test plans, one per supported provider, all
-following the same shape. See `../docs/SETUP.md` first for AWS/SSM/jar
-prerequisites and each provider's config format.
+Seven minimal, runnable JMeter test plans, one per supported provider, all
+following the same shape. See `../docs/SETUP.md` first for prerequisites
+and each provider's config format — Cognito needs AWS SDK jars and an SSM
+parameter; every other provider needs neither, just `-J` properties
+(below).
 
-| Plan                          | Auth script                    |
-|--------------------------------|----------------------------------|
-| `cognito_auth_sample.jmx`      | `../scripts/cognito_auth.groovy` |
-| `auth0_auth_sample.jmx`        | `../scripts/auth0_auth.groovy`   |
-| `okta_auth_sample.jmx`         | `../scripts/okta_auth.groovy`    |
+| Plan                          | Auth script                       |
+|--------------------------------|--------------------------------------|
+| `cognito_auth_sample.jmx`      | `../scripts/cognito_auth.groovy`    |
+| `auth0_auth_sample.jmx`        | `../scripts/auth0_auth.groovy`      |
+| `okta_auth_sample.jmx`         | `../scripts/okta_auth.groovy`       |
+| `entra_id_auth_sample.jmx`     | `../scripts/entra_id_auth.groovy`   |
+| `keycloak_auth_sample.jmx`     | `../scripts/keycloak_auth.groovy`   |
+| `ping_auth_sample.jmx`         | `../scripts/ping_auth.groovy`       |
+| `firebase_auth_sample.jmx`     | `../scripts/firebase_auth.groovy`   |
 
-## Structure (same in all three)
+## Structure (same in all seven)
 
 - **`<Provider> Auth`** (JSR223 Sampler, runs the provider's auth script)
   Logs in once (shared across all threads/iterations) and stores
-  `access_token` (Cognito also stores `id_token` / `refresh_token`) as
-  JMeter variables.
+  `access_token` (Cognito and Firebase also store `refresh_token`; Cognito
+  also stores `id_token`) as JMeter variables.
   - **Token Was Issued** (JSR223 Assertion): fails the run immediately if
     no `access_token` came back, instead of letting a blank token flow
     silently into the next request.
@@ -28,9 +34,8 @@ prerequisites and each provider's config format.
   proves the JMeter wiring works (header injection, assertions firing) —
   it does **not** confirm the token is a genuinely valid token your
   provider would accept. See `../docs/SETUP.md` §7 for how to validate
-  each provider's token for real (Cognito `GetUser`, Auth0/Okta
-  `/userinfo`), or just point `BASE_URL`/`PROTECTED_PATH` at your actual
-  protected API.
+  each provider's token for real, or just point `BASE_URL`/`PROTECTED_PATH`
+  at your actual protected API.
   - **Response Code Is 200** (Response Assertion): fails unless the HTTP
     status is exactly 200.
   - **Response Under 5s** (Duration Assertion): fails if the response takes
@@ -39,7 +44,7 @@ prerequisites and each provider's config format.
     fails if the token was missing, the status wasn't 2xx, the body was
     empty, or the body contains auth-failure text despite a 2xx status.
     This assertion is provider-agnostic, so it's identical across all
-    three plans.
+    seven plans.
 - **View Results Tree**: for inspecting requests/responses while you're
   getting things working. Remove or disable it for real load runs.
 
@@ -50,10 +55,24 @@ the test plan) to point at your real API:
 
 - `BASE_URL` / `PROTECTED_PATH` — host/path of your protected API (default
   `httpbin.org` / `/bearer`)
-- Provider-specific SSM path/region overrides (`cognito.paramPath`,
-  `auth0.paramPath`, `okta.paramPath`, etc.) — see `../docs/SETUP.md` §4
-- `cognito.username` / `cognito.password` — only for the Cognito plan, if
-  not using the hardcoded test defaults in the script
+- **Cognito**: optional overrides `cognito.paramPath` (SSM path),
+  `cognito.username`, `cognito.password` — see `../docs/SETUP.md` §4
+- **Auth0**: `auth0.domain`, `auth0.clientId`, `auth0.clientSecret`,
+  `auth0.audience` are **required**
+- **Okta**: `okta.domain`, `okta.clientId`, `okta.clientSecret` are
+  **required**
+- **Entra ID**: `entraid.tenantId`, `entraid.clientId`,
+  `entraid.clientSecret`, `entraid.scope` are **required**
+- **Keycloak**: `keycloak.baseUrl`, `keycloak.realm`, `keycloak.clientId`
+  are **required** (`keycloak.clientSecret` too, unless the client is public)
+- **Ping**: `ping.tokenUrl`, `ping.clientId`, `ping.clientSecret` are
+  **required**
+- **Firebase**: `firebase.apiKey`, `firebase.email`, `firebase.password`
+  are **required**
+
+All of the above throw a clear "Missing required JMeter property" error at
+script start if omitted — see `../docs/SETUP.md` §4 for the full property
+list including optional overrides (`grantType`, `scope`, etc.).
 
 ## Running
 
@@ -62,8 +81,38 @@ jmeter -n -t examples/cognito_auth_sample.jmx \
   -JBASE_URL=your-api.example.com \
   -JPROTECTED_PATH=/your/protected/path
 
-jmeter -n -t examples/auth0_auth_sample.jmx
-jmeter -n -t examples/okta_auth_sample.jmx
+jmeter -n -t examples/auth0_auth_sample.jmx \
+  -Jauth0.domain=your-tenant.auth0.com \
+  -Jauth0.clientId=xxxxxxxxxxxx \
+  -Jauth0.clientSecret=xxxxxxxxxxxx \
+  -Jauth0.audience=https://your-api-identifier
+
+jmeter -n -t examples/okta_auth_sample.jmx \
+  -Jokta.domain=your-org.okta.com \
+  -Jokta.clientId=xxxxxxxxxxxx \
+  -Jokta.clientSecret=xxxxxxxxxxxx
+
+jmeter -n -t examples/entra_id_auth_sample.jmx \
+  -Jentraid.tenantId=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx \
+  -Jentraid.clientId=xxxxxxxxxxxx \
+  -Jentraid.clientSecret=xxxxxxxxxxxx \
+  -Jentraid.scope=https://graph.microsoft.com/.default
+
+jmeter -n -t examples/keycloak_auth_sample.jmx \
+  -Jkeycloak.baseUrl=https://keycloak.example.com \
+  -Jkeycloak.realm=your-realm \
+  -Jkeycloak.clientId=xxxxxxxxxxxx \
+  -Jkeycloak.clientSecret=xxxxxxxxxxxx
+
+jmeter -n -t examples/ping_auth_sample.jmx \
+  -Jping.tokenUrl=https://auth.pingone.com/your-env-id/as/token \
+  -Jping.clientId=xxxxxxxxxxxx \
+  -Jping.clientSecret=xxxxxxxxxxxx
+
+jmeter -n -t examples/firebase_auth_sample.jmx \
+  -Jfirebase.apiKey=xxxxxxxxxxxx \
+  -Jfirebase.email=someuser@example.com \
+  -Jfirebase.password='YourPassword123!'
 ```
 
 Or open one in the JMeter GUI (`jmeter -t examples/<plan>.jmx`) for a first

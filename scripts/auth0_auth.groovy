@@ -5,35 +5,32 @@
  *
  * Unlike Cognito's USER_SRP_AUTH, Auth0 tokens are obtained with a plain
  * OAuth2 POST to the tenant's /oauth/token endpoint, so this script uses
- * Java's built-in HTTP client instead of an SDK.
+ * Java's built-in HTTP client and has no AWS/SDK dependency at all.
  *
  * Features:
  * - Reads Auth0 config (domain, clientId, clientSecret, audience, etc.)
- *   from AWS SSM Parameter Store (String type JSON) - same convention as
- *   cognito_auth.groovy, for consistency with the rest of this repo.
+ *   entirely from JMeter properties (-J...) - nothing hardcoded, no
+ *   external secret store required.
  * - Supports both the Client Credentials grant (default; no end-user
  *   password needed, works even when a tenant has ROPC disabled) and the
- *   Resource Owner Password grant (set "grantType": "password" in config).
+ *   Resource Owner Password grant (set auth0.grantType=password).
  * - Authenticates once and shares the resulting token across every
  *   thread/sampler for the rest of the test via JMeter properties,
  *   instead of re-authenticating on every iteration/thread.
  * - Exports access_token (and expires_in) to JMeter variables.
  *
- * Requirements:
- * - AWS SDK for Java v2 "ssm" jar (and dependencies) in JMETER_HOME/lib,
- *   same as required for cognito_auth.groovy.
- * - Local AWS profile configured with "ssm:GetParameter".
+ * Required JMeter properties (pass via -J on the command line, or set in
+ * user.properties):
+ *   auth0.domain        e.g. your-tenant.auth0.com
+ *   auth0.clientId
+ *   auth0.clientSecret
+ *   auth0.audience       required unless grantType=password and you don't need one
  *
- * SSM parameter JSON shape:
- * {
- *   "domain": "your-tenant.auth0.com",
- *   "clientId": "...",
- *   "clientSecret": "...",
- *   "audience": "https://your-api-identifier",   // required for client_credentials
- *   "grantType": "client_credentials",            // or "password"
- *   "username": "user@example.com",               // only used when grantType=password
- *   "password": "..."                             // only used when grantType=password
- * }
+ * Optional:
+ *   auth0.grantType      "client_credentials" (default) or "password"
+ *   auth0.scope          default "openid profile" (only used for grantType=password)
+ *   auth0.username       required when grantType=password
+ *   auth0.password       required when grantType=password
  *
  * Placement:
  * - Add as a JSR223 Sampler/PreProcessor that runs once per thread
@@ -51,21 +48,6 @@ import java.time.Duration
 
 import groovy.json.JsonSlurper
 
-import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider
-import software.amazon.awssdk.regions.Region
-import software.amazon.awssdk.services.ssm.SsmClient
-import software.amazon.awssdk.services.ssm.model.GetParameterRequest
-
-
-// =====[ CONFIGURATION ]========================================================
-
-// Parameter path in AWS Systems Manager Parameter Store (overridable via -Jauth0.paramPath=...)
-def PARAM_PATH = props.get("auth0.paramPath") ?: "/auth0-test/jmeter/dev"
-def SSM_REGION = props.get("auth0.ssmRegion") ?: "ap-southeast-1"
-
-// Property keys used to share the token across threads once logged in.
-final PROP_ACCESS_TOKEN = "auth0.access_token"
-
 
 // =====[ FAST PATHS: SKIP RE-AUTH WHEN A TOKEN ALREADY EXISTS ]================
 
@@ -74,6 +56,9 @@ if (vars.get("access_token")) {
     log.info("[auth0_auth] access_token already set for this thread, skipping re-auth.")
     return
 }
+
+// Property keys used to share the token across threads once logged in.
+final PROP_ACCESS_TOKEN = "auth0.access_token"
 
 // 2. Another thread already logged in; reuse the shared token instead of
 //    hitting Auth0 again. The check-then-set below is guarded by the
@@ -86,36 +71,29 @@ synchronized (props) {
         return
     }
 
-    // =====[ HELPERS ]==========================================================
+    // =====[ CONFIGURATION ]====================================================
 
-    def loadConfigFromSSM = { paramPath ->
-        def ssm = SsmClient.builder()
-                .region(Region.of(SSM_REGION))
-                .credentialsProvider(DefaultCredentialsProvider.create())
-                .build()
-        try {
-            def req = GetParameterRequest.builder()
-                    .name(paramPath)
-                    .build() // no decryption, since String type
-            def jsonText = ssm.getParameter(req).parameter().value()
-            new JsonSlurper().parseText(jsonText)
-        } finally {
-            ssm.close()
+    def requireProp = { name ->
+        def value = props.get(name)
+        if (!value || value.trim().isEmpty()) {
+            throw new RuntimeException("[auth0_auth] Missing required JMeter property: -J${name}=...")
         }
+        value
     }
+
+    def domain = requireProp("auth0.domain")
+    def clientId = requireProp("auth0.clientId")
+    def clientSecret = requireProp("auth0.clientSecret")
+    def grantType = props.get("auth0.grantType") ?: "client_credentials"
+    def audience = props.get("auth0.audience")
+
+    // =====[ HELPERS ]==========================================================
 
     def formEncode = { Map<String, String> params ->
         params.collect { k, v -> "${URLEncoder.encode(k, 'UTF-8')}=${URLEncoder.encode(v as String, 'UTF-8')}" }.join("&")
     }
 
     // =====[ MAIN AUTH FLOW ]===================================================
-
-    def cfg = loadConfigFromSSM(PARAM_PATH)
-    def domain = cfg.domain
-    def clientId = cfg.clientId
-    def clientSecret = cfg.clientSecret
-    def audience = cfg.audience
-    def grantType = cfg.grantType ?: "client_credentials"
 
     def formParams = [
             "grant_type"   : grantType,
@@ -124,14 +102,14 @@ synchronized (props) {
     ]
 
     if (grantType == "password") {
-        formParams["username"] = cfg.username
-        formParams["password"] = cfg.password
-        formParams["scope"] = cfg.scope ?: "openid profile"
+        formParams["username"] = requireProp("auth0.username")
+        formParams["password"] = requireProp("auth0.password")
+        formParams["scope"] = props.get("auth0.scope") ?: "openid profile"
         if (audience) {
             formParams["audience"] = audience
         }
     } else {
-        formParams["audience"] = audience
+        formParams["audience"] = requireProp("auth0.audience")
     }
 
     def httpClient = HttpClient.newBuilder()
