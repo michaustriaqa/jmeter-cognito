@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">
   <hashTree>
-    <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="Cognito Auth Sample Test Plan" enabled="true">
-      <stringProp name="TestPlan.comments">Sample test plan for scripts/cognito_auth.groovy. Defaults BASE_URL/PROTECTED_PATH to httpbin.org/bearer, a public endpoint that echoes back whatever Authorization header it receives, so this plan runs end-to-end with no backend of your own - it only proves the JMeter wiring (header injection, assertions) works, not that the token is a genuinely valid Cognito token. Point BASE_URL/PROTECTED_PATH (via -J or the User Defined Variables below) at your real protected API, or swap in the Cognito GetUser API (see docs/SETUP.md), to validate the token for real. The JSR223 Sampler logs in once per run (shared across threads) and stores access_token/id_token/refresh_token; the HTTP request uses access_token as a Bearer token; assertions confirm both the login and the request truly succeeded.</stringProp>
+    <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="Okta Auth Sample Test Plan" enabled="true">
+      <stringProp name="TestPlan.comments">Sample test plan for scripts/okta_auth.groovy. Defaults BASE_URL/PROTECTED_PATH to httpbin.org/bearer, a public endpoint that echoes back whatever Authorization header it receives, so this plan runs end-to-end with no backend of your own - it only proves the JMeter wiring (header injection, assertions) works, not that the token is a genuinely valid Okta token. Point BASE_URL/PROTECTED_PATH (via -J or the User Defined Variables below) at your real protected API, or call Okta's /userinfo endpoint with the token (see docs/SETUP.md), to validate it for real. The JSR223 Sampler logs in once per run (shared across threads) and stores access_token; the HTTP request uses access_token as a Bearer token; assertions confirm both the login and the request truly succeeded.</stringProp>
       <boolProp name="TestPlan.functional_mode">false</boolProp>
       <boolProp name="TestPlan.tearDown_on_shutdown">true</boolProp>
       <boolProp name="TestPlan.serialize_threadgroups">false</boolProp>
@@ -23,7 +23,7 @@
       <stringProp name="TestPlan.user_define_classpath"></stringProp>
     </TestPlan>
     <hashTree>
-      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="Cognito Auth Test" enabled="true">
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="Okta Auth Test" enabled="true">
         <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
         <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="Loop Controller" enabled="true">
           <boolProp name="LoopController.continue_forever">false</boolProp>
@@ -36,9 +36,9 @@
         <stringProp name="ThreadGroup.delay"></stringProp>
       </ThreadGroup>
       <hashTree>
-        <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="Cognito Auth" enabled="true">
+        <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="Okta Auth" enabled="true">
           <stringProp name="cacheKey">true</stringProp>
-          <stringProp name="filename">scripts/cognito_auth.groovy</stringProp>
+          <stringProp name="filename">scripts/okta_auth.groovy</stringProp>
           <stringProp name="parameters"></stringProp>
           <stringProp name="script"></stringProp>
           <stringProp name="scriptLanguage">groovy</stringProp>
@@ -49,7 +49,7 @@
             <stringProp name="script">def token = vars.get(&quot;access_token&quot;)
 if (!token || token.trim().isEmpty()) {
     AssertionResult.setFailure(true)
-    AssertionResult.setFailureMessage(&quot;cognito_auth.groovy did not produce an access_token&quot;)
+    AssertionResult.setFailureMessage(&quot;okta_auth.groovy did not produce an access_token&quot;)
 }</stringProp>
             <stringProp name="scriptLanguage">groovy</stringProp>
           </JSR223Assertion>

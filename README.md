@@ -1,70 +1,73 @@
-# JMeter Cognito Auth Scripts
+# JMeter Auth Scripts (Cognito / Auth0 / Okta)
 
-Groovy scripts for load testing applications that use Amazon Cognito authentication in Apache JMeter. Instead of a compiled JMeter plugin, this repo uses **JSR223 Sampler/Assertion elements** that run the Groovy scripts directly — no build step, no jar to install, just script files referenced from your test plan.
+Groovy scripts for load testing authenticated APIs in Apache JMeter, across three providers: **Amazon Cognito**, **Auth0**, and **Okta**. Instead of a compiled JMeter plugin, this repo uses **JSR223 Sampler/Assertion elements** that run the Groovy scripts directly — no build step, no jar to install, just script files referenced from your test plan.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 ## Features
 
-- User Pool authentication via `USER_SRP_AUTH` (full SRP handshake, including `PASSWORD_VERIFIER` and `NEW_PASSWORD_REQUIRED` challenges)
-- Cognito app config loaded from AWS SSM Parameter Store, not hardcoded in the script
-- Login happens **once per test run**, not once per request: the token is cached in shared JMeter properties (`props`) behind a `synchronized` check, so every thread and every loop iteration reuses it instead of re-authenticating against Cognito
-- `access_token` / `id_token` / `refresh_token` exposed as JMeter variables for use in subsequent samplers (e.g. `Authorization: Bearer ${access_token}`)
-- A JSR223 Assertion that verifies a request truly succeeded — a token was actually issued, the response was 2xx, the body wasn't empty, and it doesn't contain auth-failure text under a misleading 200
+- **Cognito** (`scripts/cognito_auth.groovy`): full `USER_SRP_AUTH` handshake, including `PASSWORD_VERIFIER` and `NEW_PASSWORD_REQUIRED` challenges
+- **Auth0** (`scripts/auth0_auth.groovy`) and **Okta** (`scripts/okta_auth.groovy`): standard OAuth2 token endpoint calls — Client Credentials grant by default (no end-user password needed), or Resource Owner Password grant via config
+- All provider config loaded from AWS SSM Parameter Store, not hardcoded in the scripts
+- Login happens **once per test run**, not once per request: the token is cached in shared JMeter properties (`props`) behind a `synchronized` check, so every thread and every loop iteration reuses it instead of re-authenticating
+- `access_token` (Cognito also: `id_token` / `refresh_token`) exposed as JMeter variables for use in subsequent samplers (e.g. `Authorization: Bearer ${access_token}`)
+- A single, provider-agnostic JSR223 Assertion (`scripts/globalassertion.groovy`) that verifies a request truly succeeded — a token was actually issued, the response was 2xx, the body wasn't empty, and it doesn't contain auth-failure text under a misleading 200
 
 ## Prerequisites
 
 - Java 11+
 - Apache JMeter 5.6+
-- AWS account with a Cognito User Pool
-- AWS SDK for Java v2 jars (see below) — no Maven build required, these are just downloaded and dropped into JMeter's `lib` directory
+- An account with the provider(s) you're testing against (Cognito User Pool, Auth0 tenant, and/or Okta org)
+- AWS SDK for Java v2 jars (see below) — needed by all three scripts to read config from SSM, even for Auth0/Okta. No Maven build required, these are just downloaded and dropped into JMeter's `lib` directory
 
 ## Setup
 
-Full walkthrough — AWS SDK jars, IAM permissions, the SSM parameter JSON shape, property overrides — is in [`docs/SETUP.md`](docs/SETUP.md). Short version:
+Full walkthrough — AWS SDK jars, IAM permissions, each provider's SSM parameter JSON shape, property overrides — is in [`docs/SETUP.md`](docs/SETUP.md). Short version:
 
-1. Place the AWS SDK v2 jars (`cognitoidentityprovider`, `ssm`, `auth`, `regions`, `sdk-core`, an HTTP client, `jackson-*`) in `JMETER_HOME/lib`, then restart JMeter.
-2. Make sure AWS credentials with `ssm:GetParameter`, `cognito-idp:InitiateAuth`, and `cognito-idp:RespondToAuthChallenge` are available to the machine running JMeter (env vars, `~/.aws/credentials`, or an instance/role profile).
-3. Store your Cognito config (`region`, `userPoolId`, `clientId`, `clientSecret`, optional `newPermanentPassword`) as a String-type JSON parameter in SSM.
+1. Place the AWS SDK v2 jars (`ssm`, plus `cognitoidentityprovider` if using Cognito, `auth`, `regions`, `sdk-core`, an HTTP client, `jackson-*`) in `JMETER_HOME/lib`, then restart JMeter.
+2. Make sure AWS credentials with `ssm:GetParameter` (plus `cognito-idp:InitiateAuth` / `cognito-idp:RespondToAuthChallenge` for Cognito) are available to the machine running JMeter (env vars, `~/.aws/credentials`, or an instance/role profile).
+3. Store your provider config as a String-type JSON parameter in SSM — see `docs/SETUP.md` for the exact shape per provider.
 
 ## Configuration
 
-`scripts/cognito_auth.groovy` reads these JMeter properties, falling back to hardcoded test defaults if unset:
+Each script reads its own JMeter properties, falling back to hardcoded test defaults if unset:
 
-| Property             | Purpose                                                   |
-|-----------------------|------------------------------------------------------------|
-| `cognito.paramPath`   | SSM parameter path (default: `/cognito-test/jmeter/dev`)   |
-| `cognito.username`    | Cognito username to authenticate as                        |
-| `cognito.password`    | Password for that username                                 |
+| Provider | Property             | Purpose                                                   |
+|----------|-----------------------|------------------------------------------------------------|
+| Cognito  | `cognito.paramPath`   | SSM parameter path (default: `/cognito-test/jmeter/dev`)   |
+| Cognito  | `cognito.username`    | Cognito username to authenticate as                        |
+| Cognito  | `cognito.password`    | Password for that username                                 |
+| Auth0    | `auth0.paramPath`     | SSM parameter path (default: `/auth0-test/jmeter/dev`)     |
+| Okta     | `okta.paramPath`      | SSM parameter path (default: `/okta-test/jmeter/dev`)      |
 
 Pass overrides on the command line with `-J`, e.g. `-Jcognito.username=someuser@example.com`.
 
 ## Usage
 
-1. Add a **JSR223 Sampler** as the first sampler in your Thread Group (outside any loop), pointing its "Script File" at `scripts/cognito_auth.groovy`. It stores `access_token`, `id_token`, and `refresh_token` as JMeter variables.
+1. Add a **JSR223 Sampler** as the first sampler in your Thread Group (outside any loop), pointing its "Script File" at the auth script for your provider (`scripts/cognito_auth.groovy`, `scripts/auth0_auth.groovy`, or `scripts/okta_auth.groovy`). It stores `access_token` (and, for Cognito, `id_token`/`refresh_token`) as JMeter variables.
 2. Add an **HTTP Header Manager** using `Authorization: Bearer ${access_token}` for the requests that follow.
-3. Attach a **JSR223 Assertion** pointing at `scripts/globalassertion.groovy` to your protected-request samplers to confirm they truly succeeded, not just that they didn't throw.
+3. Attach a **JSR223 Assertion** pointing at `scripts/globalassertion.groovy` to your protected-request samplers to confirm they truly succeeded, not just that they didn't throw. This assertion is the same regardless of provider.
 
-See [`examples/cognito_auth_sample.jmx`](examples/cognito_auth_sample.jmx) and [`examples/README.md`](examples/README.md) for a complete, runnable test plan wiring all of this together.
+See [`examples/`](examples/) for a complete, runnable sample test plan per provider ([`examples/README.md`](examples/README.md) explains the structure).
 
 ## Debugging
 
-- `cognito_auth.groovy` and `globalassertion.groovy` log via JMeter's `log` object (`log.info(...)`) — check `jmeter.log` or enable debug logging in `log4j2.xml`.
+- The auth scripts and `globalassertion.groovy` log via JMeter's `log` object (`log.info(...)`) — check `jmeter.log` or enable debug logging in `log4j2.xml`.
 - Use JMeter's View Results Tree listener to inspect the auth sampler and subsequent requests.
-- Check AWS CloudWatch logs for Cognito-side auth errors.
-- Monitor token expiration timing — the script only logs in once per run and doesn't currently refresh; long-running tests may need the `refresh_token` variable wired up separately.
+- Check the provider's own logs for auth errors (AWS CloudWatch for Cognito, the tenant/org's log stream for Auth0/Okta).
+- Monitor token expiration timing — the scripts only log in once per run and don't currently refresh; long-running tests may need the `refresh_token` variable (Cognito only) wired up separately.
 
 ## Common Issues
 
 ### Authentication Failures
-- Verify AWS credentials are properly configured and can reach SSM/Cognito
-- Check the SSM parameter JSON matches the expected shape (see `docs/SETUP.md`)
-- Check Cognito User Pool client settings (SRP auth flow enabled, client secret correct)
-- Ensure the user exists and the password meets requirements
+- Verify AWS credentials are properly configured and can reach SSM (and Cognito, if used)
+- Check the SSM parameter JSON matches the expected shape for that provider (see `docs/SETUP.md`)
+- Cognito: check User Pool client settings (SRP auth flow enabled, client secret correct) and that the user exists with a password meeting requirements
+- Auth0/Okta: check the app is authorized for the grant type in use (Client Credentials apps need the API/authorization server explicitly granted; Resource Owner Password may be disabled by default)
 
 ### Performance Considerations
-- The auth script is designed to run once per test (shared across threads via `props`); make sure it's placed outside any loop so it isn't accidentally re-run per iteration
-- Monitor Cognito service quotas if you do need multiple distinct logins (e.g. one per simulated user)
+- Each auth script is designed to run once per test (shared across threads via `props`); make sure it's placed outside any loop so it isn't accidentally re-run per iteration
+- Monitor your provider's rate limits/quotas if you do need multiple distinct logins (e.g. one per simulated user)
 - Consider connection pooling for large tests
 
 ## Contributing
